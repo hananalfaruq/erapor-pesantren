@@ -2,8 +2,8 @@
 
 | Atribut | Isi |
 |---|---|
-| Versi dokumen | 1.0 |
-| Tanggal | 27 Oktober 2026 |
+| Versi dokumen | 1.1 |
+| Tanggal | 29 Oktober 2026 (revisi setelah laporan orientasi Tahap 1) |
 | Lembaga | Pondok Pesantren Darul Kholidin (SMP & SMA) |
 | Tujuan dokumen | Pegangan teknis untuk membangun aplikasi (dibaca manusia dan agen AI di Antigravity IDE) |
 | Stack | Laravel 13, PHP 8.3/8.4, PostgreSQL 16+, Blade + Tailwind CSS + Alpine.js, Vite |
@@ -86,7 +86,7 @@ Akun hanya punya dua nilai `role`: `admin` dan `teacher`. Peran **Wali Kelas buk
 |---|---|---|---|
 | Kelola periode, kelas, mapel, kurikulum, guru, santri | Ya | Tidak | Tidak |
 | Plotting guru dan wali kelas | Ya | Tidak | Tidak |
-| Input/ubah nilai | Semua kelas-mapel (periode aktif) | Hanya kelas-mapel yang diampu | Sama seperti guru mapel |
+| Input/ubah nilai | Semua kelas-mapel (periode aktif) | Hanya kelas-mapel yang diampu | Hanya kelas-mapel yang **diampunya sendiri** (lewat `teaching_assignments`). Status wali kelas **tidak** memberi hak input nilai mapel guru lain |
 | Input absensi | Semua kelas | Tidak | Hanya kelas perwalian |
 | Lihat monitoring kelengkapan | Semua kelas | Progres kelas-mapel miliknya | Kelas perwalian (semua mapel) |
 | Unduh template import nilai | Semua | Yang diampu | Yang diampu |
@@ -95,7 +95,7 @@ Akun hanya punya dua nilai `role`: `admin` dan `teacher`. Peran **Wali Kelas buk
 
 Catatan:
 - Wali kelas hanya melihat **status** kelengkapan nilai mapel lain (terisi/belum, jumlah), bukan nilainya.
-- Akun admin boleh ditugaskan sebagai guru/wali kelas (menu menyesuaikan role + penugasan).
+- Akun admin boleh ditugaskan sebagai guru/wali kelas. Admin selalu melihat menu admin lengkap; bila ia punya penugasan mengajar atau perwalian, menu "Kelas Saya" (dan Absensi/Kelengkapan Kelas) juga muncul.
 
 ---
 
@@ -126,7 +126,7 @@ Catatan:
 - **Backend:** Laravel 13, PHP 8.3/8.4 (ikuti persyaratan minimum resmi Laravel 13 saat instalasi).
 - **Database:** PostgreSQL 16+, database `erapor_pesantren`.
 - **Frontend:** Blade + Tailwind CSS + Alpine.js, build dengan Vite, semua aset lokal.
-- **Excel:** `maatwebsite/excel`. **Verifikasi kompatibilitas dengan Laravel 13 saat instalasi**; bila belum kompatibel, gunakan `spatie/simple-excel` (OpenSpout) atau PhpSpreadsheet langsung.
+- **Excel:** `maatwebsite/excel` v4.x (terverifikasi kompatibel dengan Laravel 13 dan PHP ^8.3 pada Tahap 1). Ini major versi baru: **baca dokumentasi v4 dan jangan menulis kode dari ingatan/tutorial v3**, karena sebagian API bisa berbeda. Bila ada fitur yang tidak tersedia (mis. data validation, proteksi sheet, sheet tersembunyi), gunakan PhpSpreadsheet langsung atau `spatie/simple-excel` dan catat di `docs/decisions.md`.
 - **Auth:** session auth bawaan Laravel (login custom dengan `username`), tanpa registrasi publik.
 - **Test:** Pest atau PHPUnit (feature test dengan database PostgreSQL terpisah `erapor_pesantren_test`).
 
@@ -213,9 +213,10 @@ CREATE UNIQUE INDEX academic_years_single_active ON academic_years (is_active) W
 | id | bigint PK | | |
 | grade_level | smallint | tidak | 1–6 |
 | level | varchar(3) | tidak | `SMP` / `SMA` |
-| name | varchar(10) | tidak | Contoh `1A`, **UNIQUE**, wajib diawali digit `grade_level` |
+| name | varchar(10) | tidak | Contoh `1A`, **UNIQUE**, wajib diawali digit `grade_level` (divalidasi di FormRequest **dan** CHECK database) |
+| is_active | boolean | tidak | default true |
 
-CHECK: `(grade_level BETWEEN 1 AND 3 AND level='SMP') OR (grade_level BETWEEN 4 AND 6 AND level='SMA')`.
+CHECK: `(grade_level BETWEEN 1 AND 3 AND level='SMP') OR (grade_level BETWEEN 4 AND 6 AND level='SMA')`. CHECK kedua: `left(name, 1) = grade_level::text`.
 
 ### 7.4 `subjects` (master mapel)
 | Kolom | Tipe | Null | Keterangan |
@@ -225,6 +226,7 @@ CHECK: `(grade_level BETWEEN 1 AND 3 AND level='SMP') OR (grade_level BETWEEN 4 
 | name_latin | varchar(100) | tidak | |
 | name_arabic | varchar(100) | ya | |
 | sort_order | integer | tidak | Urutan kolom di Excel dan layar |
+| is_active | boolean | tidak | default true. Mapel nonaktif tidak muncul di pilihan baru (kurikulum, plotting), data lama tetap |
 
 ### 7.5 `grade_level_subjects` (kurikulum per tingkat)
 | Kolom | Tipe | Keterangan |
@@ -306,7 +308,7 @@ Baris dibuat saat wali kelas pertama kali menyimpan absensi kelasnya.
 `id`, `user_id`, `action` (varchar), `subject_type`, `subject_id`, `old_values` (jsonb), `new_values` (jsonb), `ip_address`, `created_at`. Mencatat: perubahan/penghapusan nilai, perubahan absensi, ganti periode aktif, clone semester, import, export.
 
 ### 7.13 Seeder
-- `AdminSeeder` (wajib): membuat akun admin dari `ADMIN_USERNAME` dan `ADMIN_PASSWORD` dengan `must_change_password = true`. **Tidak ada seeder mapel.**
+- `AdminSeeder` (wajib): membuat akun admin dari `ADMIN_USERNAME` dan `ADMIN_PASSWORD` dengan `must_change_password = true`. Bila `ADMIN_PASSWORD` kosong, seeder **berhenti dengan pesan error yang jelas** (tidak membuat akun dengan password kosong/bawaan). **Tidak ada seeder mapel.**
 - `DemoSeeder` (hanya `APP_ENV=local`): 6 tingkat, 2–3 rombel per tingkat, 5 mapel dummy dengan kurikulum berbeda per tingkat, 10 guru, ±150 santri, plotting lengkap. Untuk uji coba dan screenshot.
 
 ---
@@ -360,7 +362,7 @@ KP:
 
 KP:
 - `classrooms.name` harus diawali digit tingkatnya; `level` diisi otomatis dari tingkat.
-- Kelas/mapel/guru/santri yang sudah dipakai tidak bisa dihapus (pesan: "Data sedang dipakai di …"); sediakan nonaktifkan.
+- Kelas/mapel/guru/santri yang sudah dipakai tidak bisa dihapus (pesan: "Data sedang dipakai di …"); sediakan nonaktifkan (`is_active`). Kelas dan mapel nonaktif tidak muncul di pilihan baru (enrollment, kurikulum, plotting) tetapi data lama tetap utuh.
 - Matriks kurikulum: mencabut centang mapel dari suatu tingkat **diblokir** bila sudah ada nilai mapel itu pada rombel tingkat tersebut di periode aktif.
 - Mengubah `code` mapel menampilkan peringatan bahwa header Excel Mail Merge ikut berubah.
 - Pindah rombel dalam **tingkat yang sama** mempertahankan nilai. Pindah **lintas tingkat** hanya diizinkan jika santri belum punya nilai/absensi di periode itu.
@@ -510,7 +512,7 @@ Semua akun hasil import: `role = teacher`, `must_change_password = true`. Userna
 | Kelompok | Kolom |
 |---|---|
 | Identitas | No, NIS (teks), Nama Lengkap, Nama Arab, L/P, Kelas, Kelas Dapodik, Wali Kelas, Wali Kelas (Arab) |
-| Mapel | **Seluruh** mapel di master, urut `sort_order`, sama di setiap sheet |
+| Mapel | Seluruh mapel **aktif** di master, ditambah mapel nonaktif yang memiliki nilai pada periode yang diexport; urut `sort_order`; daftar kolom sama di setiap sheet dalam satu file |
 | Absensi | Sakit, Izin, Alpa |
 
 - Isi sel mapel: angka `2`–`9` (tipe numerik) bila dinilai; `-` bila mapel tidak ada di kurikulum tingkat rombel itu; **kosong** bila ada di kurikulum tetapi belum dinilai (BR-10).
@@ -566,7 +568,7 @@ Prinsip UI: tombol aksi utama jelas ("Simpan"), konfirmasi untuk aksi berisiko (
 - PC server dengan IP statis di LAN; Windows (Laragon/Herd) atau Linux (Nginx + PHP-FPM). Port database tidak dibuka ke jaringan.
 - Build produksi: `composer install --no-dev -o`, `npm run build`, `php artisan migrate --force`, `config:cache`, `route:cache`, `view:cache`.
 - Akses jarak jauh sementara: `cloudflared tunnel --url http://localhost:<port>` (lihat 6.3).
-- Font (termasuk font Arab untuk tampilan nama) disertakan lokal.
+- Font Arab untuk tampilan nama santri/guru: gunakan Noto Naskh Arabic (atau Noto Sans Arabic) lewat paket npm `@fontsource`, di-bundle oleh Vite. Tanpa CDN dan tanpa Google Fonts.
 
 **Kompatibilitas browser:** Chrome/Edge/Firefox terbaru, termasuk di HP Android.
 
@@ -654,6 +656,10 @@ Keputusan berikut diambil agar PRD tuntas. Ubah bila tidak sesuai.
 | A7 | Kenaikan kelas tahunan dikerjakan di Milestone 6 | Dibutuhkan sebelum tahun ajaran berikutnya, tidak menghambat penggunaan semester ini |
 | A8 | Mengosongkan sel di web grid menghapus nilai, sedangkan sel kosong di import dilewati | Penghapusan hanya lewat jalur yang disengaja |
 | A9 | Kelas Dapodik berupa teks bebas tanpa validasi format | Contoh data bervariasi (`1A`, `7A`) |
+| A10 | `classrooms` dan `subjects` punya `is_active` | Diperlukan agar BR-14 (penonaktifan) konsisten dengan skema |
+| A11 | Export memuat mapel aktif + mapel nonaktif yang punya nilai di periode itu | Mapel yang sudah dinonaktifkan tidak boleh membuat nilai periode lama hilang dari export |
+| A12 | Hak input nilai wali kelas = hanya mapel yang ia ampu | Selaras BR-05; wali kelas hanya mengisi absensi dan memantau |
+| A13 | Nama kelas wajib diawali digit tingkat, dijaga FormRequest dan CHECK `left(name,1) = grade_level::text` | Mencegah kelas salah tingkat walau data masuk lewat jalur lain |
 
 **Risiko**
 - Kompatibilitas `maatwebsite/excel` dengan Laravel 13 belum terverifikasi: cek saat instalasi, siapkan fallback (Bagian 6.1).
